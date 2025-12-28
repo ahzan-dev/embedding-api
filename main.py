@@ -1,13 +1,17 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from sentence_transformers import SentenceTransformer
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import logging
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Embedding API", version="1.0.0")
+
+# API Key from environment variable
+API_KEY = os.getenv("API_KEY", "your-secret-key-change-this")
 
 # Load model on startup
 logger.info("Loading sentence transformer model...")
@@ -23,6 +27,12 @@ class EmbedResponse(BaseModel):
     dimensions: int
     count: int
 
+def verify_api_key(x_api_key: Optional[str] = Header(None)):
+    """Verify API key from header"""
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return x_api_key
+
 @app.get("/")
 async def root():
     return {
@@ -34,14 +44,18 @@ async def root():
 
 @app.get("/health")
 async def health():
+    """Health check - no auth required"""
     return {
         "status": "healthy",
-        "model": "sentence-transformers/all-MiniLM-L6-v2",  # Fixed
+        "model": "sentence-transformers/all-MiniLM-L6-v2",
         "dimensions": model.get_sentence_embedding_dimension()
     }
 
 @app.post("/embed", response_model=EmbedResponse)
-async def embed(request: EmbedRequest):
+async def embed(request: EmbedRequest, api_key: str = Header(None, alias="X-API-Key")):
+    """Protected endpoint - requires API key"""
+    verify_api_key(api_key)
+    
     try:
         if not request.texts:
             raise HTTPException(status_code=400, detail="texts cannot be empty")
@@ -69,8 +83,10 @@ async def embed(request: EmbedRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/embed/single")
-async def embed_single(text: str):
-    """Quick endpoint for single text embedding"""
+async def embed_single(text: str, api_key: str = Header(None, alias="X-API-Key")):
+    """Protected endpoint - requires API key"""
+    verify_api_key(api_key)
+    
     try:
         embedding = model.encode([text], show_progress_bar=False)[0]
         return {
