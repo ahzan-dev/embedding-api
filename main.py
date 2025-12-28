@@ -1,17 +1,24 @@
 from fastapi import FastAPI, HTTPException, Header
 from sentence_transformers import SentenceTransformer
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Union
 import logging
 import os
+from dotenv import load_dotenv  # Add this import
+
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = FastAPI(title="Embedding API", version="1.0.0")
 
 # API Key from environment variable
 API_KEY = os.getenv("API_KEY", "your-secret-key-change-this")
+print(f"Using API Key: {API_KEY}")
 
 # Load model on startup
 logger.info("Loading sentence transformer model...")
@@ -26,6 +33,17 @@ class EmbedResponse(BaseModel):
     embeddings: List[List[float]]
     dimensions: int
     count: int
+
+class OpenAIEmbeddingRequest(BaseModel):
+    input: Union[str, List[str]]
+    model: str = "all-MiniLM-L6-v2"
+    encoding_format: str = "float"
+
+class OpenAIEmbeddingResponse(BaseModel):
+    object: str = "list"
+    data: List[dict]
+    model: str
+    usage: dict
 
 def verify_api_key(x_api_key: Optional[str] = Header(None)):
     """Verify API key from header"""
@@ -93,6 +111,55 @@ async def embed_single(text: str, api_key: str = Header(None, alias="X-API-Key")
             "embedding": embedding.tolist(),
             "dimensions": len(embedding)
         }
+    except Exception as e:
+        logger.error(f"Embedding error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/v1/embeddings", response_model=OpenAIEmbeddingResponse)
+async def embeddings_openai_compatible(
+    request: OpenAIEmbeddingRequest,
+    api_key: str = Header(None, alias="Authorization")
+):
+    """OpenAI-compatible embeddings endpoint"""
+    # Handle "Bearer TOKEN" format
+    if api_key and api_key.startswith("Bearer "):
+        api_key = api_key[7:]
+        print(f"Extracted API Key: {api_key}")
+    
+    if api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    
+    try:
+        # Convert input to list
+        input_texts = request.input if isinstance(request.input, list) else [request.input]
+        
+        logger.info(f"OpenAI-compatible embedding request for {len(input_texts)} texts")
+        
+        # Use chunking if you added it earlier
+        embeddings = model.encode(
+            input_texts,
+            show_progress_bar=False,
+            convert_to_numpy=True
+        )
+        
+        # OpenAI response format
+        return OpenAIEmbeddingResponse(
+            object="list",
+            data=[
+                {
+                    "object": "embedding",
+                    "embedding": emb.tolist(),
+                    "index": i
+                }
+                for i, emb in enumerate(embeddings)
+            ],
+            model=request.model,
+            usage={
+                "prompt_tokens": sum(len(t.split()) for t in input_texts),
+                "total_tokens": sum(len(t.split()) for t in input_texts)
+            }
+        )
+    
     except Exception as e:
         logger.error(f"Embedding error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
