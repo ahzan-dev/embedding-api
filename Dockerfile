@@ -2,10 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install curl for healthchecks
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+# 1. Install system dependencies (rarely changes)
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install PyTorch CPU first, then other dependencies
+# 2. Install Python packages (rarely changes)
 RUN pip install --no-cache-dir \
     torch --extra-index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir \
@@ -14,11 +15,11 @@ RUN pip install --no-cache-dir \
     sentence-transformers \
     pydantic
 
-# Copy application
-COPY main.py .
-
-# Download model at build time (cached in image)
+# 3. Download model BEFORE copying main.py (cached!)
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+
+# 4. Copy application files LAST (changes frequently)
+COPY main.py .
 
 EXPOSE 8000
 
